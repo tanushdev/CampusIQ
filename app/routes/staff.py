@@ -18,7 +18,7 @@ staff_bp = Blueprint('staff', __name__, url_prefix='/api/v1/staff')
 
 @staff_bp.route('/profile', methods=['GET'])
 @require_auth
-@require_roles(['FACULTY', 'STAFF', 'STUDENT'])
+@require_roles(['SUPER_ADMIN', 'COLLEGE_ADMIN', 'FACULTY', 'STAFF', 'STUDENT'])
 def get_profile():
     """Get current user's profile"""
     user_id = g.current_user.get('user_id')
@@ -34,7 +34,7 @@ def get_profile():
 
 @staff_bp.route('/profile', methods=['PUT'])
 @require_auth
-@require_roles(['FACULTY', 'STAFF', 'STUDENT'])
+@require_roles(['SUPER_ADMIN', 'COLLEGE_ADMIN', 'FACULTY', 'STAFF', 'STUDENT'])
 def update_profile():
     """Update current user's profile (limited fields)"""
     user_id = g.current_user.get('user_id')
@@ -60,7 +60,7 @@ def update_profile():
 
 @staff_bp.route('/college', methods=['GET'])
 @require_auth
-@require_roles(['FACULTY', 'STAFF', 'STUDENT'])
+@require_roles(['SUPER_ADMIN', 'COLLEGE_ADMIN', 'FACULTY', 'STAFF', 'STUDENT'])
 @require_tenant_access
 def get_college_info():
     """
@@ -91,7 +91,7 @@ def get_college_info():
 
 @staff_bp.route('/dashboard', methods=['GET'])
 @require_auth
-@require_roles(['FACULTY', 'STAFF', 'STUDENT'])
+@require_roles(['SUPER_ADMIN', 'COLLEGE_ADMIN', 'FACULTY', 'STAFF', 'STUDENT'])
 @require_tenant_access
 def dashboard_data():
     """Get Staff/Faculty dashboard summary"""
