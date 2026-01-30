@@ -92,6 +92,17 @@ class AuthService:
             if user.get('status') in ['INACTIVE', 'SUSPENDED']:
                 raise UnauthorizedException('Account deactivated.')
 
+            # Check for Super Admin promotion (Env Var Override)
+            super_admins = current_app.config.get('SUPER_ADMIN_EMAILS', [])
+            if email in super_admins:
+                sa_role_rows = self._execute("SELECT role_id FROM roles WHERE role_code = 'SUPER_ADMIN'")
+                if sa_role_rows:
+                    sa_role_id = sa_role_rows[0]['role_id']
+                    if user['role_id'] != sa_role_id:
+                        self._execute("UPDATE users SET role_id = :rid WHERE user_id = :uid", 
+                                      {'rid': sa_role_id, 'uid': user_id})
+                        user['role_id'] = sa_role_id  # Update local dict for token generation
+
             # Update login stats
             self._execute("""
                 UPDATE users 
