@@ -75,7 +75,8 @@ class AuthService:
         
         if not email: raise UnauthorizedException('Email not provided')
         
-        # 4. Detect college
+        # 4. Detect college & Ensure Roles (Self-healing DB)
+        self._ensure_roles_exist()
         email_domain = email.split('@')[1] if '@' in email else None
         college = self.get_college_by_domain(email_domain) if email_domain else None
         
@@ -145,8 +146,8 @@ class AuthService:
             else:
                 raise UnauthorizedException('Access Denied. Contact your administrator.')
 
-        # 6. Get Role Code (Fresh check)
-        role_rows = self._execute("SELECT role_code FROM roles WHERE role_id = :rid", {'rid': user['role_id']})
+        # 6. Get Role Code (Fresh check with CAST)
+        role_rows = self._execute("SELECT role_code FROM roles WHERE role_id = CAST(:rid AS UUID)", {'rid': str(user['role_id'])})
         role_code = role_rows[0]['role_code'] if role_rows else 'FACULTY'
         
         # 7. Generate Tokens with strict stringification
@@ -170,6 +171,27 @@ class AuthService:
             }
         }
 
+    def _ensure_roles_exist(self):
+        """Self-healing: Ensure base roles exist in the database"""
+        try:
+            check = self._execute("SELECT COUNT(*) as cnt FROM roles")
+            if check and check[0]['cnt'] == 0:
+                current_app.logger.info("Roles table empty. Seeding base roles...")
+                roles = [
+                    ('Super Admin', 'SUPER_ADMIN', 100),
+                    ('College Admin', 'COLLEGE_ADMIN', 50),
+                    ('Faculty', 'FACULTY', 10),
+                    ('Staff', 'STAFF', 5),
+                    ('Student', 'STUDENT', 1)
+                ]
+                for name, code, level in roles:
+                    self._execute("""
+                        INSERT INTO roles (role_id, role_name, role_code, hierarchy_level)
+                        VALUES (CAST(:rid AS UUID), :name, :code, :level)
+                    """, {'rid': str(uuid.uuid4()), 'name': name, 'code': code, 'level': level})
+        except Exception as e:
+            current_app.logger.error(f"Error seeding roles: {e}")
+
     def _determine_user_role(self, email, user_id=None):
         if email in current_app.config.get('SUPER_ADMIN_EMAILS', []):
             rows = self._execute("SELECT role_id FROM roles WHERE role_code = 'SUPER_ADMIN'")
@@ -185,7 +207,7 @@ class AuthService:
             if rows and rows[0]['role_id']:
                 return rows[0]['role_id']
                 
-        # Default to FACULTY if email domain matches a college
+        # Default to FACULTY
         rows = self._execute("SELECT role_id FROM roles WHERE role_code = 'FACULTY'")
         return rows[0]['role_id'] if rows else None
 
