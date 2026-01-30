@@ -11,7 +11,8 @@ import jwt
 import hashlib
 import uuid
 import json
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from .db_engine import get_db_engine
 
 class AuthService:
     """Service for authentication with Google OAuth 2.0"""
@@ -20,9 +21,8 @@ class AuthService:
     GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
     
     def __init__(self, db_path: str = None):
-        self.uri = current_app.config.get('SQLALCHEMY_DATABASE_URI')
-        engine_options = current_app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {})
-        self.engine = create_engine(self.uri, **engine_options)
+        # Use shared engine to prevent connection exhaustion
+        self.engine = get_db_engine()
     
     def _execute(self, sql: str, params: Dict = None) -> list:
         if params is None: params = {}

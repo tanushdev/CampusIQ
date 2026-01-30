@@ -7,18 +7,17 @@ import re
 from datetime import datetime
 from flask import current_app
 import google.generativeai as genai
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from .db_engine import get_db_engine
 
 class QnAService:
     def __init__(self, db_path: str = None):
-        self.uri = current_app.config.get('SQLALCHEMY_DATABASE_URI')
         # Lazy initialization of engine to avoid connection overhead on import
         self.engine = None
 
     def _get_engine(self):
         if not self.engine:
-            engine_options = current_app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {})
-            self.engine = create_engine(self.uri, **engine_options)
+            self.engine = get_db_engine()
         return self.engine
 
     def _execute(self, sql: str, params: dict) -> list[dict]:

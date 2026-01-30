@@ -9,16 +9,14 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 from flask import current_app, g
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from .db_engine import get_db_engine
 
 class ScheduleService:
     """Service for schedule management with multi-tenant isolation"""
     
     def __init__(self, db_path: str = None):
-        # We rely on SQLAlchemy URI from config
-        self.uri = current_app.config.get('SQLALCHEMY_DATABASE_URI')
-        engine_options = current_app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {})
-        self.engine = create_engine(self.uri, **engine_options)
+        self.engine = get_db_engine()
     
     def _execute(self, sql: str, params: Dict = None) -> List[Dict]:
         """Execute SQL with named parameters safely"""

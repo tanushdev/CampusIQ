@@ -8,7 +8,8 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 from flask import current_app, g, request
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from .db_engine import get_db_engine
 
 class AuditService:
     """Service for audit logging and security trail"""
@@ -22,9 +23,7 @@ class AuditService:
     SEVERITY_WARNING = 'WARNING'
     
     def __init__(self, db_path: str = None):
-        self.uri = current_app.config.get('SQLALCHEMY_DATABASE_URI')
-        engine_options = current_app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {})
-        self.engine = create_engine(self.uri, **engine_options)
+        self.engine = get_db_engine()
     
     def _execute(self, sql: str, params: Dict = None):
         if params is None: params = {}
