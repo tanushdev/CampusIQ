@@ -220,7 +220,11 @@ class ScheduleService:
         # Batch insert would be better but keeping it simple for now
         for row_idx, row in enumerate(reader):
             try:
-                data = {k.lower().strip().replace(' ', '_'): v for k, v in row.items()}
+                # Normalize keys: lower, strip, replace space with underscore, remove BOM artifacts
+                data = {}
+                for k, v in row.items():
+                    clean_key = k.lower().strip().replace(' ', '_').replace('\ufeff', '')
+                    data[clean_key] = v
                 
                 day_val = data.get('day') or data.get('weekday') or data.get('day_of_week')
                 day = self._parse_day(day_val)
