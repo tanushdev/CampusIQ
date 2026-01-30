@@ -1,11 +1,12 @@
 """
 CampusIQ - User Service
 User management with role validation and tenant isolation
+Updated for PostgreSQL compatibility via SQLAlchemy
 """
-import sqlite3
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 from flask import current_app, g
+from sqlalchemy import create_engine, text
 import uuid
 import json
 
@@ -14,13 +15,19 @@ class UserService:
     """Service for user management with RBAC enforcement"""
     
     def __init__(self, db_path: str = None):
-        self.db_path = db_path or current_app.config.get('DATABASE_PATH', 'campusiq.db')
+        self.uri = current_app.config.get('SQLALCHEMY_DATABASE_URI')
+        self.engine = create_engine(self.uri)
     
-    def _get_connection(self):
-        """Get database connection"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _execute(self, sql: str, params: Dict = None) -> List[Dict]:
+        """Execute SQL with named parameters safely"""
+        if params is None:
+            params = {}
+        with self.engine.connect() as conn:
+            result = conn.execute(text(sql), params)
+            if result.returns_rows:
+                return [dict(row._mapping) for row in result]
+            conn.commit()
+            return []
     
     def _get_user_context(self) -> Dict:
         """Get current user context from Flask g"""
@@ -45,11 +52,8 @@ class UserService:
             if current_user['user_id'] != user_id:
                 return {'error': 'ACCESS_DENIED', 'message': 'You can only view your own profile'}
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
         try:
-            cursor.execute("""
+            rows = self._execute("""
                 SELECT u.user_id, u.email, u.full_name, u.first_name, u.last_name,
                        u.avatar_url, u.phone, u.status, u.email_verified,
                        u.last_login_at, u.college_id,
@@ -58,13 +62,13 @@ class UserService:
                 FROM users u
                 JOIN roles r ON u.role_id = r.role_id
                 LEFT JOIN colleges c ON u.college_id = c.college_id
-                WHERE u.user_id = ? AND u.is_deleted = 0
-            """, [user_id])
+                WHERE u.user_id = :uid AND u.is_deleted = false
+            """, {'uid': user_id})
             
-            row = cursor.fetchone()
-            
-            if not row:
+            if not rows:
                 return {'error': 'NOT_FOUND', 'message': 'User not found'}
+            
+            row = rows[0]
             
             # Tenant check for college admin
             if current_user['role'] == 'COLLEGE_ADMIN':
@@ -92,9 +96,9 @@ class UserService:
                     'logo_url': row['college_logo_url']
                 } if row['college_id'] else None
             }
-            
-        finally:
-            conn.close()
+        except Exception as e:
+            current_app.logger.error(f"Error fetching profile: {e}")
+            return {'error': 'DATABASE', 'message': str(e)}
     
     def update_profile(self, user_id: str, data: Dict) -> Dict:
         """
@@ -110,9 +114,6 @@ class UserService:
             if current_user['user_id'] != user_id:
                 return {'error': 'ACCESS_DENIED', 'message': 'You can only update your own profile'}
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
         try:
             # Determine allowed fields based on role
             allowed_fields = ['full_name', 'first_name', 'last_name', 'phone']
@@ -126,21 +127,17 @@ class UserService:
             if not update_data:
                 return {'error': 'VALIDATION', 'message': 'No valid fields to update'}
             
-            # Build update query
-            set_clause = ', '.join([f"{k} = ?" for k in update_data.keys()])
-            values = list(update_data.values())
-            values.extend([datetime.utcnow().isoformat(), current_user['user_id'], user_id])
+            # Build update query dynamically
+            set_parts = [f"{k} = :{k}" for k in update_data.keys()]
+            set_clause = ', '.join(set_parts)
             
-            cursor.execute(f"""
+            params = {**update_data, 'ts': datetime.utcnow(), 'uid': current_user['user_id'], 'target_uid': user_id}
+            
+            self._execute(f"""
                 UPDATE users
-                SET {set_clause}, updated_at = ?, updated_by = ?
-                WHERE user_id = ? AND is_deleted = 0
-            """, values)
-            
-            if cursor.rowcount == 0:
-                return {'error': 'NOT_FOUND', 'message': 'User not found'}
-            
-            conn.commit()
+                SET {set_clause}, updated_at = :ts, updated_by = :uid
+                WHERE user_id = :target_uid AND is_deleted = false
+            """, params)
             
             # Log audit
             self._log_audit(
@@ -152,9 +149,9 @@ class UserService:
             )
             
             return {'success': True}
-            
-        finally:
-            conn.close()
+        except Exception as e:
+            current_app.logger.error(f"Error updating profile: {e}")
+            return {'error': 'DATABASE', 'message': str(e)}
     
     def get_stats(self, college_id: str = None) -> Dict:
         """Get aggregate user stats (Admin only)"""
@@ -162,28 +159,26 @@ class UserService:
         if current_user['role'] not in ('SUPER_ADMIN', 'COLLEGE_ADMIN'):
             return {}
             
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
         try:
             if not college_id and current_user['role'] == 'SUPER_ADMIN':
-                cursor.execute("SELECT COUNT(*) FROM users WHERE is_deleted = 0")
-                return {'total_users': cursor.fetchone()[0]}
+                total = self._execute("SELECT COUNT(*) as cnt FROM users WHERE is_deleted = false")[0]['cnt']
+                return {'total_users': total}
             
             # Specific college stats
             target_cid = college_id or current_user['college_id']
             stats = {}
             for role in ('FACULTY', 'STAFF', 'STUDENT'):
-                cursor.execute("""
-                    SELECT COUNT(*) FROM users u
+                count = self._execute("""
+                    SELECT COUNT(*) as cnt FROM users u
                     JOIN roles r ON u.role_id = r.role_id
-                    WHERE u.college_id = ? AND r.role_code = ? AND u.is_deleted = 0
-                """, [target_cid, role])
-                stats[f'total_{role.lower()}'] = cursor.fetchone()[0]
+                    WHERE u.college_id = :cid AND r.role_code = :role AND u.is_deleted = false
+                """, {'cid': target_cid, 'role': role})[0]['cnt']
+                stats[f'total_{role.lower()}'] = count
             
             return stats
-        finally:
-            conn.close()
+        except Exception as e:
+            current_app.logger.error(f"Error getting stats: {e}")
+            return {}
 
     # =========================================================================
     # ADMIN USER MANAGEMENT
@@ -213,9 +208,6 @@ class UserService:
         elif current_user['role'] == 'SUPER_ADMIN' and college_id_filter:
             fixed_college_id = college_id_filter
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
         try:
             query = """
                 SELECT u.user_id, u.email, u.full_name, u.status, u.last_login_at,
@@ -223,41 +215,37 @@ class UserService:
                 FROM users u
                 JOIN roles r ON u.role_id = r.role_id
                 LEFT JOIN colleges c ON u.college_id = c.college_id
-                WHERE u.is_deleted = 0
+                WHERE u.is_deleted = false
             """
-            params = []
+            params = {}
             
             # Tenant filter
             if fixed_college_id:
-                query += " AND u.college_id = ?"
-                params.append(fixed_college_id)
-            elif current_user['role'] == 'SUPER_ADMIN' and not college_id_filter:
-                # If super admin and no filter, we might want to allow viewing all (current behavior)
-                pass
+                query += " AND u.college_id = :cid"
+                params['cid'] = fixed_college_id
             
             if role_filter:
-                query += " AND r.role_code = ?"
-                params.append(role_filter)
+                query += " AND r.role_code = :role"
+                params['role'] = role_filter
             
             if status_filter:
-                query += " AND u.status = ?"
-                params.append(status_filter)
+                query += " AND u.status = :status"
+                params['status'] = status_filter
             
             # Count total
             count_query = query.replace(
                 "SELECT u.user_id, u.email, u.full_name, u.status, u.last_login_at,\n"
                 "                       r.role_code, r.role_name, c.college_name",
-                "SELECT COUNT(*)"
+                "SELECT COUNT(*) as cnt"
             )
-            cursor.execute(count_query, params)
-            total = cursor.fetchone()[0]
+            total = self._execute(count_query, params)[0]['cnt']
             
             # Add pagination
-            query += " ORDER BY u.created_at DESC LIMIT ? OFFSET ?"
-            params.extend([per_page, (page - 1) * per_page])
+            query += " ORDER BY u.created_at DESC LIMIT :limit OFFSET :offset"
+            params['limit'] = per_page
+            params['offset'] = (page - 1) * per_page
             
-            cursor.execute(query, params)
-            users = [dict(row) for row in cursor.fetchall()]
+            users = self._execute(query, params)
             
             return {
                 'items': users,
@@ -266,9 +254,9 @@ class UserService:
                 'per_page': per_page,
                 'pages': (total + per_page - 1) // per_page
             }
-            
-        finally:
-            conn.close()
+        except Exception as e:
+            current_app.logger.error(f"Error fetching users: {e}")
+            return {'error': 'DATABASE', 'message': str(e)}
     
     def create_user(self, data: Dict) -> Dict:
         """
@@ -290,29 +278,32 @@ class UserService:
         
         email = data['email'].lower().strip()
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
         try:
             # Check for existing user (including inactive/deleted)
-            cursor.execute("SELECT user_id, status, is_deleted FROM users WHERE LOWER(email) = ?", [email])
-            existing = cursor.fetchone()
+            existing = self._execute(
+                "SELECT user_id, status, is_deleted FROM users WHERE LOWER(email) = :email", 
+                {'email': email}
+            )
             
-            if existing and not (existing['is_deleted'] == 1 or existing['status'] == 'INACTIVE'):
+            if existing and not (existing[0]['is_deleted'] or existing[0]['status'] == 'INACTIVE'):
                 return {'error': 'DUPLICATE', 'message': 'Email already registered and active'}
             
             # Get role_id
-            cursor.execute("SELECT role_id, hierarchy_level FROM roles WHERE role_code = ?", 
-                          [data['role_code']])
-            role_row = cursor.fetchone()
+            role_rows = self._execute(
+                "SELECT role_id, hierarchy_level FROM roles WHERE role_code = :role", 
+                {'role': data['role_code']}
+            )
             
-            if not role_row:
+            if not role_rows:
                 return {'error': 'VALIDATION', 'message': 'Invalid role'}
+            
+            role_row = role_rows[0]
             
             # Role hierarchy check for College Admin
             if current_user['role'] == 'COLLEGE_ADMIN':
-                cursor.execute("SELECT hierarchy_level FROM roles WHERE role_code = 'COLLEGE_ADMIN'")
-                admin_level = cursor.fetchone()['hierarchy_level']
+                admin_level = self._execute(
+                    "SELECT hierarchy_level FROM roles WHERE role_code = 'COLLEGE_ADMIN'"
+                )[0]['hierarchy_level']
                 
                 if role_row['hierarchy_level'] >= admin_level:
                     return {'error': 'ACCESS_DENIED', 'message': 'Cannot create user with equal or higher role'}
@@ -324,47 +315,44 @@ class UserService:
             
             if existing:
                 # Re-activate and update existing record
-                user_id = existing['user_id']
-                cursor.execute("""
+                user_id = existing[0]['user_id']
+                self._execute("""
                     UPDATE users SET
-                        full_name = ?,
-                        role_id = ?,
-                        college_id = ?,
+                        full_name = :name,
+                        role_id = :rid,
+                        college_id = :cid,
                         status = 'ACTIVE',
-                        is_deleted = 0,
-                        updated_by = ?,
-                        updated_at = ?
-                    WHERE user_id = ?
-                """, [
-                    data.get('full_name', ''),
-                    role_row['role_id'],
-                    college_id,
-                    current_user['user_id'],
-                    datetime.utcnow().isoformat(),
-                    user_id
-                ])
+                        is_deleted = false,
+                        updated_by = :uid,
+                        updated_at = :ts
+                    WHERE user_id = :target_uid
+                """, {
+                    'name': data.get('full_name', ''),
+                    'rid': role_row['role_id'],
+                    'cid': college_id,
+                    'uid': current_user['user_id'],
+                    'ts': datetime.utcnow(),
+                    'target_uid': user_id
+                })
                 summary = f"Re-activated user: {email}"
             else:
                 # Create entirely new user
                 user_id = str(uuid.uuid4())
-                cursor.execute("""
+                self._execute("""
                     INSERT INTO users (
                         user_id, email, full_name, role_id, college_id,
                         status, created_by, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?)
-                """, [
-                    user_id,
-                    email,
-                    data.get('full_name', ''),
-                    role_row['role_id'],
-                    college_id,
-                    current_user['user_id'],
-                    datetime.utcnow().isoformat(),
-                    datetime.utcnow().isoformat()
-                ])
+                    ) VALUES (:uid, :email, :name, :rid, :cid, 'ACTIVE', :creator, :ts, :ts)
+                """, {
+                    'uid': user_id,
+                    'email': email,
+                    'name': data.get('full_name', ''),
+                    'rid': role_row['role_id'],
+                    'cid': college_id,
+                    'creator': current_user['user_id'],
+                    'ts': datetime.utcnow()
+                })
                 summary = f"Created user: {email}"
-            
-            conn.commit()
             
             self._log_audit(
                 action='CREATE' if not existing else 'REACTIVATE',
@@ -375,9 +363,9 @@ class UserService:
             )
             
             return {'success': True, 'user_id': user_id, 'reactivated': bool(existing)}
-            
-        finally:
-            conn.close()
+        except Exception as e:
+            current_app.logger.error(f"Error creating user: {e}")
+            return {'error': 'DATABASE', 'message': str(e)}
     
     def update_user_role(self, user_id: str, new_role: str, new_college_id: str = None) -> Dict:
         """
@@ -390,21 +378,19 @@ class UserService:
         if current_user['role'] not in ('SUPER_ADMIN', 'COLLEGE_ADMIN'):
             return {'error': 'ACCESS_DENIED', 'message': 'Admin access required'}
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
         try:
             # Get target user's current data
-            cursor.execute("""
+            target_rows = self._execute("""
                 SELECT u.user_id, u.college_id, r.role_code
                 FROM users u
                 JOIN roles r ON u.role_id = r.role_id
-                WHERE u.user_id = ? AND u.is_deleted = 0
-            """, [user_id])
+                WHERE u.user_id = :uid AND u.is_deleted = false
+            """, {'uid': user_id})
             
-            target_user = cursor.fetchone()
-            if not target_user:
+            if not target_rows:
                 return {'error': 'NOT_FOUND', 'message': 'User not found'}
+            
+            target_user = target_rows[0]
             
             # Tenant check for College Admin
             if current_user['role'] == 'COLLEGE_ADMIN':
@@ -420,10 +406,9 @@ class UserService:
                 return {'error': 'ROLE_ESCALATION', 'message': str(e)}
             
             # Get new role_id
-            cursor.execute("SELECT role_id FROM roles WHERE role_code = ?", [new_role])
-            new_role_row = cursor.fetchone()
+            new_role_rows = self._execute("SELECT role_id FROM roles WHERE role_code = :role", {'role': new_role})
             
-            if not new_role_row:
+            if not new_role_rows:
                 return {'error': 'VALIDATION', 'message': 'Invalid role'}
             
             # Determine college_id to set
@@ -431,14 +416,17 @@ class UserService:
             if current_user['role'] == 'SUPER_ADMIN' and new_college_id is not None:
                 college_to_set = new_college_id if new_college_id != "" else None
 
-            cursor.execute("""
+            self._execute("""
                 UPDATE users
-                SET role_id = ?, college_id = ?, updated_by = ?, updated_at = ?
-                WHERE user_id = ?
-            """, [new_role_row['role_id'], college_to_set, current_user['user_id'], 
-                  datetime.utcnow().isoformat(), user_id])
-            
-            conn.commit()
+                SET role_id = :rid, college_id = :cid, updated_by = :uid, updated_at = :ts
+                WHERE user_id = :target_uid
+            """, {
+                'rid': new_role_rows[0]['role_id'], 
+                'cid': college_to_set, 
+                'uid': current_user['user_id'], 
+                'ts': datetime.utcnow(), 
+                'target_uid': user_id
+            })
             
             self._log_audit(
                 action='UPDATE_USER_ADMIN',
@@ -450,9 +438,9 @@ class UserService:
             )
             
             return {'success': True}
-            
-        finally:
-            conn.close()
+        except Exception as e:
+            current_app.logger.error(f"Error updating user role: {e}")
+            return {'error': 'DATABASE', 'message': str(e)}
     
     def deactivate_user(self, user_id: str) -> Dict:
         """Deactivate a user (soft delete)"""
@@ -465,30 +453,21 @@ class UserService:
         if current_user['user_id'] == user_id:
             return {'error': 'VALIDATION', 'message': 'Cannot deactivate yourself'}
         
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
         try:
             # Tenant check
             if current_user['role'] == 'COLLEGE_ADMIN':
-                cursor.execute(
-                    "SELECT college_id FROM users WHERE user_id = ?",
-                    [user_id]
+                target = self._execute(
+                    "SELECT college_id FROM users WHERE user_id = :uid",
+                    {'uid': user_id}
                 )
-                target = cursor.fetchone()
-                if not target or target['college_id'] != current_user['college_id']:
+                if not target or target[0]['college_id'] != current_user['college_id']:
                     return {'error': 'ACCESS_DENIED', 'message': 'User not in your college'}
             
-            cursor.execute("""
+            self._execute("""
                 UPDATE users
-                SET status = 'INACTIVE', updated_by = ?, updated_at = ?
-                WHERE user_id = ? AND is_deleted = 0
-            """, [current_user['user_id'], datetime.utcnow().isoformat(), user_id])
-            
-            if cursor.rowcount == 0:
-                return {'error': 'NOT_FOUND', 'message': 'User not found'}
-            
-            conn.commit()
+                SET status = 'INACTIVE', updated_by = :uid, updated_at = :ts
+                WHERE user_id = :target_uid AND is_deleted = false
+            """, {'uid': current_user['user_id'], 'ts': datetime.utcnow(), 'target_uid': user_id})
             
             self._log_audit(
                 action='DEACTIVATE',
@@ -498,9 +477,9 @@ class UserService:
             )
             
             return {'success': True}
-            
-        finally:
-            conn.close()
+        except Exception as e:
+            current_app.logger.error(f"Error deactivating user: {e}")
+            return {'error': 'DATABASE', 'message': str(e)}
     
     # =========================================================================
     # HELPER METHODS
@@ -510,8 +489,8 @@ class UserService:
                    old_value: str = None, new_value: str = None, summary: str = None):
         """Log audit event"""
         try:
-            from .audit_service import AuditService
-            audit = AuditService(self.db_path)
+            from .audit_service import get_audit_service
+            audit = get_audit_service()
             audit.log(
                 action_type=action,
                 entity_type=entity_type,
