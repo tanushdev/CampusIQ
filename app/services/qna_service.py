@@ -17,7 +17,8 @@ class QnAService:
 
     def _get_engine(self):
         if not self.engine:
-            self.engine = create_engine(self.uri)
+            engine_options = current_app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {})
+            self.engine = create_engine(self.uri, **engine_options)
         return self.engine
 
     def _execute(self, sql: str, params: dict) -> list[dict]:

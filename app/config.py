@@ -4,6 +4,7 @@ Environment-based configuration for production, development, testing
 """
 import os
 from datetime import timedelta
+from sqlalchemy.pool import NullPool
 
 class Config:
     """Base configuration"""
@@ -104,11 +105,11 @@ class ProductionConfig(Config):
 
 class VercelConfig(ProductionConfig):
     """Vercel serverless configuration"""
-    # Serverless-specific settings
-    SQLALCHEMY_POOL_SIZE = 1
-    SQLALCHEMY_MAX_OVERFLOW = 0
-    SQLALCHEMY_POOL_TIMEOUT = 10
-    SQLALCHEMY_POOL_RECYCLE = 300
+    # Serverless-specific settings - NO connection pooling
+    # This prevents "connection slots reserved" errors
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'poolclass': NullPool,  # Create connections on-demand, close immediately
+    }
 
 
 # Configuration dictionary

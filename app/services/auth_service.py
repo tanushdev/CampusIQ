@@ -21,7 +21,8 @@ class AuthService:
     
     def __init__(self, db_path: str = None):
         self.uri = current_app.config.get('SQLALCHEMY_DATABASE_URI')
-        self.engine = create_engine(self.uri)
+        engine_options = current_app.config.get('SQLALCHEMY_ENGINE_OPTIONS', {})
+        self.engine = create_engine(self.uri, **engine_options)
     
     def _execute(self, sql: str, params: Dict = None) -> list:
         if params is None: params = {}
