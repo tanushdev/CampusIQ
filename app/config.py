@@ -5,7 +5,6 @@ Environment-based configuration for production, development, testing
 import os
 from datetime import timedelta
 
-
 class Config:
     """Base configuration"""
     # App
@@ -13,14 +12,14 @@ class Config:
     APP_NAME = 'CampusIQ'
     VERSION = '1.0.0'
     
-    # Database - Oracle
-    ORACLE_USER = os.environ.get('ORACLE_USER', 'campusiq')
-    ORACLE_PASSWORD = os.environ.get('ORACLE_PASSWORD', '')
-    ORACLE_DSN = os.environ.get('ORACLE_DSN', 'localhost:1521/XEPDB1')
-    SQLALCHEMY_DATABASE_URI = f"oracle+oracledb://{ORACLE_USER}:{ORACLE_PASSWORD}@{ORACLE_DSN}"
+    # Database - Default to Postgres if URL provided, else Oracle/SQLite
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
+    if SQLALCHEMY_DATABASE_URI and SQLALCHEMY_DATABASE_URI.startswith('postgres://'):
+        SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace('postgres://', 'postgresql://', 1)
+        
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_POOL_SIZE = 10
-    SQLALCHEMY_MAX_OVERFLOW = 20
+    SQLALCHEMY_POOL_SIZE = 5
+    SQLALCHEMY_MAX_OVERFLOW = 10
     
     # JWT Configuration
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or SECRET_KEY
@@ -72,9 +71,9 @@ class DevelopmentConfig(Config):
     SESSION_COOKIE_SECURE = False
     CORS_ORIGINS = ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173']
     
-    # Use SQLite for easy development (can switch to Oracle)
+    # Use SQLite for easy development
     USE_SQLITE = os.environ.get('USE_SQLITE', 'true').lower() == 'true'
-    if USE_SQLITE:
+    if USE_SQLITE and not Config.SQLALCHEMY_DATABASE_URI:
         SQLALCHEMY_DATABASE_URI = 'sqlite:///campusiq_dev.db'
 
 
@@ -91,11 +90,6 @@ class ProductionConfig(Config):
     """Production configuration"""
     DEBUG = False
     SQLALCHEMY_ECHO = False
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
-    if SQLALCHEMY_DATABASE_URI and SQLALCHEMY_DATABASE_URI.startswith('postgres://'):
-        SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI.replace('postgres://', 'postgresql://', 1)
-    if not SQLALCHEMY_DATABASE_URI:
-        SQLALCHEMY_DATABASE_URI = Config.SQLALCHEMY_DATABASE_URI
     
     # Stricter security for production
     SESSION_COOKIE_SECURE = True
@@ -104,13 +98,7 @@ class ProductionConfig(Config):
     # Ensure secrets are set
     @classmethod
     def init_app(cls, app):
-        Config.init_app(app)
-        
-        # Verify critical environment variables
-        required_vars = ['SECRET_KEY', 'JWT_SECRET_KEY', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']
-        missing = [var for var in required_vars if not os.environ.get(var)]
-        if missing:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        pass
 
 
 class VercelConfig(ProductionConfig):
@@ -118,7 +106,7 @@ class VercelConfig(ProductionConfig):
     # Serverless-specific settings
     SQLALCHEMY_POOL_SIZE = 1
     SQLALCHEMY_MAX_OVERFLOW = 0
-    SQLALCHEMY_POOL_TIMEOUT = 30
+    SQLALCHEMY_POOL_TIMEOUT = 10
     SQLALCHEMY_POOL_RECYCLE = 300
 
 
