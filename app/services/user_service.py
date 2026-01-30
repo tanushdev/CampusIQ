@@ -66,7 +66,7 @@ class UserService:
                 FROM users u
                 JOIN roles r ON u.role_id = r.role_id
                 LEFT JOIN colleges c ON u.college_id = c.college_id
-                WHERE u.user_id = :uid::uuid AND u.is_deleted = false
+                WHERE u.user_id = CAST(:uid AS UUID) AND u.is_deleted = false
             """, {'uid': user_id})
             
             if not rows:
