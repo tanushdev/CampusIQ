@@ -70,8 +70,25 @@ class UserService:
             """, {'uid': user_id})
             
             if not rows:
-                current_app.logger.error(f"[AUTH] User record not found for UID: {user_id}")
-                return {'error': 'NOT_FOUND', 'message': f'User {user_id} not found in database'}
+                current_app.logger.warning(f"[AUTH] User ID {user_id} not found, trying email fallback...")
+                # Search by email as fallback (handles cases where ID changed but token is old)
+                user_email = current_user.get('email')
+                if user_email:
+                    rows = self._execute("""
+                        SELECT u.user_id, u.email, u.full_name, u.first_name, u.last_name,
+                               u.avatar_url, u.phone, u.status, u.email_verified,
+                               u.last_login_at, u.college_id,
+                               r.role_code, r.role_name,
+                               c.college_name, c.college_logo_url
+                        FROM users u
+                        JOIN roles r ON u.role_id = r.role_id
+                        LEFT JOIN colleges c ON u.college_id = c.college_id
+                        WHERE LOWER(u.email) = LOWER(:email) AND u.is_deleted = false
+                    """, {'email': user_email})
+            
+            if not rows:
+                current_app.logger.error(f"[AUTH] User not found by ID {user_id} or Email {current_user.get('email')}")
+                return {'error': 'NOT_FOUND', 'message': 'Account not found in database'}
             
             row = rows[0]
             

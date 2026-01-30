@@ -79,8 +79,8 @@ class AuthService:
         email_domain = email.split('@')[1] if '@' in email else None
         college = self.get_college_by_domain(email_domain) if email_domain else None
         
-        # 5. Find or create user
-        user_rows = self._execute("SELECT * FROM users WHERE LOWER(email) = :email OR google_id = :gid", 
+        # 5. Find or create user - Normalized case-insensitive check
+        user_rows = self._execute("SELECT * FROM users WHERE LOWER(email) = LOWER(:email) OR google_id = :gid", 
                                   {'email': email, 'gid': google_id})
         
         user_id = None
