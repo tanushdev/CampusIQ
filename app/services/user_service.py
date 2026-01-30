@@ -49,7 +49,7 @@ class UserService:
         # Users can view their own profile
         # Admins can view users in their scope
         if current_user['role'] in ('FACULTY', 'STAFF', 'STUDENT'):
-            if current_user['user_id'] != user_id:
+            if str(current_user['user_id']) != str(user_id):
                 return {'error': 'ACCESS_DENIED', 'message': 'You can only view your own profile'}
         
         try:
