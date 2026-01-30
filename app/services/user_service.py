@@ -76,9 +76,10 @@ class UserService:
             row = rows[0]
             
             # Tenant check for college admin
-            if current_user['role'] == 'COLLEGE_ADMIN':
+            # ALLOW viewing own profile even if college_id mismatch (avoids 403 during login sync)
+            if current_user['role'] == 'COLLEGE_ADMIN' and str(user_id) != str(current_user['user_id']):
                 if str(row['college_id']) != str(current_user['college_id']):
-                    current_app.logger.warning(f"[AUTH] Tenant mismatch for {user_id}")
+                    current_app.logger.warning(f"[AUTH] Tenant mismatch: {current_user['user_id']} tried to view {user_id}")
                     return {'error': 'ACCESS_DENIED', 'message': 'User not in your college scope'}
             
             return {
