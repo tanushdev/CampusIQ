@@ -87,11 +87,22 @@ class AuthService:
         user = None
         
         if user_rows:
-            user = user_rows[0]
+            user = dict(user_rows[0])
             user_id = str(user['user_id'])
             
             if user.get('status') in ['INACTIVE', 'SUSPENDED']:
                 raise UnauthorizedException('Account deactivated.')
+
+            # Check if role_id is valid, if not, heal it
+            role_check = self._execute("SELECT role_code FROM roles WHERE role_id = :rid", {'rid': user['role_id']})
+            if not role_check:
+                current_app.logger.warning(f"User {email} has invalid role_id {user['role_id']}. Healing...")
+                # Try to determine role again
+                healed_role_id = self._determine_user_role(email, user_id=user_id)
+                if healed_role_id:
+                    self._execute("UPDATE users SET role_id = :rid WHERE user_id = :uid", 
+                                  {'rid': healed_role_id, 'uid': user_id})
+                    user['role_id'] = healed_role_id
 
             # Check for Super Admin promotion (Env Var Override)
             super_admins = current_app.config.get('SUPER_ADMIN_EMAILS', [])
@@ -102,16 +113,16 @@ class AuthService:
                     if user['role_id'] != sa_role_id:
                         self._execute("UPDATE users SET role_id = :rid WHERE user_id = :uid", 
                                       {'rid': sa_role_id, 'uid': user_id})
-                        user['role_id'] = sa_role_id  # Update local dict for token generation
+                        user['role_id'] = sa_role_id
 
-            # Update login stats
+            # Update login stats and link google_id
             self._execute("""
                 UPDATE users 
                 SET last_login_at = :ts, login_count = login_count + 1,
                     avatar_url = COALESCE(:avatar, avatar_url),
                     google_id = COALESCE(:gid, google_id)
-                WHERE LOWER(email) = :email
-            """, {'ts': datetime.utcnow(), 'avatar': avatar_url, 'gid': google_id, 'email': email})
+                WHERE user_id = :uid
+            """, {'ts': datetime.utcnow(), 'avatar': avatar_url, 'gid': google_id, 'uid': user_id})
         else:
             # Auto-create super admin ONLY
             if email in current_app.config.get('SUPER_ADMIN_EMAILS', []):
@@ -134,17 +145,19 @@ class AuthService:
             else:
                 raise UnauthorizedException('Access Denied. Contact your administrator.')
 
-        # 6. Get Role Code
+        # 6. Get Role Code (Fresh check)
         role_rows = self._execute("SELECT role_code FROM roles WHERE role_id = :rid", {'rid': user['role_id']})
         role_code = role_rows[0]['role_code'] if role_rows else 'FACULTY'
         
-        # 7. Generate Tokens
+        # 7. Generate Tokens with strict stringification
         access_token = self._create_access_token({
-            'user_id': user_id, 'email': email, 
-            'college_id': user.get('college_id'), 'role': role_code
+            'user_id': str(user_id), 
+            'email': email, 
+            'college_id': str(user.get('college_id') or ''), 
+            'role': str(role_code)
         })
-        refresh_token = self._create_refresh_token(user_id)
-        self._store_refresh_token(user_id, refresh_token)
+        refresh_token = self._create_refresh_token(str(user_id))
+        self._store_refresh_token(str(user_id), refresh_token)
 
         return {
             'access_token': access_token,
@@ -157,11 +170,24 @@ class AuthService:
             }
         }
 
-    def _determine_user_role(self, email):
+    def _determine_user_role(self, email, user_id=None):
         if email in current_app.config.get('SUPER_ADMIN_EMAILS', []):
             rows = self._execute("SELECT role_id FROM roles WHERE role_code = 'SUPER_ADMIN'")
             return rows[0]['role_id'] if rows else None
-        return None
+        
+        if user_id:
+            # Join with roles to ensure the role_id actually exists
+            rows = self._execute("""
+                SELECT u.role_id FROM users u 
+                JOIN roles r ON u.role_id = r.role_id 
+                WHERE u.user_id = :uid
+            """, {'uid': user_id})
+            if rows and rows[0]['role_id']:
+                return rows[0]['role_id']
+                
+        # Default to FACULTY if email domain matches a college
+        rows = self._execute("SELECT role_id FROM roles WHERE role_code = 'FACULTY'")
+        return rows[0]['role_id'] if rows else None
 
     def get_college_by_domain(self, domain: str) -> Optional[Dict]:
         rows = self._execute("""

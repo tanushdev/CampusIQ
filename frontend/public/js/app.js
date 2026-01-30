@@ -42,6 +42,14 @@ async function checkAuthStatus() {
         const response = await fetch(`${API_BASE_URL}/auth/me`, {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+
+        if (response.status === 404) {
+            localStorage.removeItem('campusiq_token');
+            localStorage.removeItem('campusiq_refresh_token');
+            localStorage.removeItem('campusiq_user_id');
+            return;
+        }
+
         const result = await response.json();
 
         if (result.success) {
@@ -108,6 +116,16 @@ async function fetchUserInfoAndRedirect() {
                 'Authorization': `Bearer ${localStorage.getItem('campusiq_token')}`
             }
         });
+
+        if (response.status === 404) {
+            console.error('[AUTH] User not found in database. Clearing session.');
+            localStorage.removeItem('campusiq_token');
+            localStorage.removeItem('campusiq_refresh_token');
+            localStorage.removeItem('campusiq_user_id');
+            showNotification('Session invalid. Please login again.', 'error');
+            setTimeout(() => { window.location.href = '/'; }, 1500);
+            return;
+        }
 
         const result = await response.json();
         console.log('[AUTH] Profile API Response:', result);
