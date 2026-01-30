@@ -96,6 +96,7 @@ function checkAuthCallback() {
 
 async function fetchUserInfoAndRedirect() {
     try {
+        console.log('[AUTH] Fetching user info from:', `${API_BASE_URL}/auth/me`);
         const response = await fetch(`${API_BASE_URL}/auth/me`, {
             headers: {
                 'Authorization': `Bearer ${localStorage.getItem('campusiq_token')}`
@@ -103,10 +104,21 @@ async function fetchUserInfoAndRedirect() {
         });
 
         const result = await response.json();
+        console.log('[AUTH] API Response:', result);
 
         if (result.success) {
             const user = result.data;
-            const role = typeof user.role === 'object' ? user.role.code : user.role;
+            console.log('[AUTH] User data:', user);
+            console.log('[AUTH] Raw role value:', user.role);
+            console.log('[AUTH] Role type:', typeof user.role);
+
+            // Handle both string and object formats
+            let role = user.role;
+            if (typeof role === 'object' && role !== null) {
+                role = role.code || role.role_code || 'FACULTY';
+            }
+
+            console.log('[AUTH] Detected role:', role);
 
             // Redirect after a short delay so user can see notification
             setTimeout(() => {
@@ -117,15 +129,17 @@ async function fetchUserInfoAndRedirect() {
                     'STAFF': 'dashboard.html',
                     'STUDENT': 'dashboard.html'
                 };
-                window.location.href = redirects[role] || 'dashboard.html';
+                const targetUrl = redirects[role] || 'dashboard.html';
+                console.log('[AUTH] Redirecting to:', targetUrl);
+                window.location.href = targetUrl;
             }, 1000);
         } else {
-            console.error('Profile fetch failed:', result);
+            console.error('[AUTH] Profile fetch failed:', result);
             // Default to main dashboard if profile fetch fails
             setTimeout(() => { window.location.href = 'dashboard.html'; }, 1000);
         }
     } catch (err) {
-        console.error('Profile Fetch Error:', err);
+        console.error('[AUTH] Profile Fetch Error:', err);
         setTimeout(() => { window.location.href = 'dashboard.html'; }, 1000);
     }
 }
