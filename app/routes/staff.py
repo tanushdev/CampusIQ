@@ -159,12 +159,8 @@ def get_directory():
     
     service = UserService()
     # Scoped to own college, filter by role
-    result = service.get_users(
-        role_filter=role_filter,
-        college_id_filter=college_id,
-        per_page=100
-    )
-    
+    return jsonify(result)
+
 @staff_bp.route('/current-status', methods=['GET'])
 @require_auth
 @require_roles(['FACULTY', 'STAFF', 'STUDENT'])

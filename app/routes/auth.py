@@ -180,6 +180,14 @@ def get_current_user():
     user_service = UserService()
     user_details = user_service.get_user_profile(user['user_id'])
     
+    if 'error' in user_details:
+        status_code = 404 if user_details['error'] == 'NOT_FOUND' else 403
+        return jsonify({
+            'success': False,
+            'error': user_details['error'],
+            'message': user_details.get('message', 'Profile error')
+        }), status_code
+        
     return jsonify({
         'success': True,
         'data': user_details
