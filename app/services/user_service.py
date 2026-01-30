@@ -53,6 +53,10 @@ class UserService:
                 return {'error': 'ACCESS_DENIED', 'message': 'You can only view your own profile'}
         
         try:
+            # Add explicit logging for debugging
+            current_app.logger.info(f"[AUTH] Fetching profile for UID: {user_id}")
+            
+            # Use explicit UUID casting for PostgreSQL
             rows = self._execute("""
                 SELECT u.user_id, u.email, u.full_name, u.first_name, u.last_name,
                        u.avatar_url, u.phone, u.status, u.email_verified,
@@ -62,18 +66,20 @@ class UserService:
                 FROM users u
                 JOIN roles r ON u.role_id = r.role_id
                 LEFT JOIN colleges c ON u.college_id = c.college_id
-                WHERE u.user_id = :uid AND u.is_deleted = false
+                WHERE u.user_id = :uid::uuid AND u.is_deleted = false
             """, {'uid': user_id})
             
             if not rows:
-                return {'error': 'NOT_FOUND', 'message': 'User not found'}
+                current_app.logger.error(f"[AUTH] User record not found for UID: {user_id}")
+                return {'error': 'NOT_FOUND', 'message': f'User {user_id} not found in database'}
             
             row = rows[0]
             
             # Tenant check for college admin
             if current_user['role'] == 'COLLEGE_ADMIN':
-                if row['college_id'] != current_user['college_id']:
-                    return {'error': 'ACCESS_DENIED', 'message': 'User not in your college'}
+                if str(row['college_id']) != str(current_user['college_id']):
+                    current_app.logger.warning(f"[AUTH] Tenant mismatch for {user_id}")
+                    return {'error': 'ACCESS_DENIED', 'message': 'User not in your college scope'}
             
             return {
                 'user_id': row['user_id'],
