@@ -45,7 +45,13 @@ async function checkAuthStatus() {
         const result = await response.json();
 
         if (result.success) {
-            const role = typeof result.data.role === 'object' ? result.data.role.code : result.data.role;
+            const user = result.data;
+            let role = 'FACULTY';
+            if (user.role) {
+                role = typeof user.role === 'object' ? (user.role.code || user.role.role_code) : user.role;
+            }
+            const normalizedRole = role.toString().toUpperCase().trim();
+
             const redirects = {
                 'SUPER_ADMIN': 'super-admin-dashboard.html',
                 'COLLEGE_ADMIN': 'college-admin-dashboard.html',
@@ -53,7 +59,7 @@ async function checkAuthStatus() {
                 'STAFF': 'dashboard.html',
                 'STUDENT': 'dashboard.html'
             };
-            const dashboardUrl = redirects[role] || 'dashboard.html';
+            const dashboardUrl = redirects[normalizedRole] || 'dashboard.html';
 
             if (authNav) {
                 authNav.innerHTML = `<a href="${dashboardUrl}" class="btn btn-dark btn-pill">Dashboard</a>`;
@@ -104,43 +110,53 @@ async function fetchUserInfoAndRedirect() {
         });
 
         const result = await response.json();
-        console.log('[AUTH] API Response:', result);
+        console.log('[AUTH] Profile API Response:', result);
 
         if (result.success) {
             const user = result.data;
-            console.log('[AUTH] User data:', user);
-            console.log('[AUTH] Raw role value:', user.role);
-            console.log('[AUTH] Role type:', typeof user.role);
+            console.log('[AUTH] User record:', user);
 
-            // Handle both string and object formats
-            let role = user.role;
-            if (typeof role === 'object' && role !== null) {
-                role = role.code || role.role_code || 'FACULTY';
+            // Extract role code robustly
+            let role = 'FACULTY'; // Default
+            if (user.role) {
+                if (typeof user.role === 'object') {
+                    role = user.role.code || user.role.role_code || 'FACULTY';
+                } else {
+                    role = user.role;
+                }
             }
 
-            console.log('[AUTH] Detected role:', role);
+            const normalizedRole = role.toString().toUpperCase().trim();
+            console.log('[AUTH] Normalized detected role:', normalizedRole);
 
-            // Redirect after a short delay so user can see notification
+            const redirects = {
+                'SUPER_ADMIN': 'super-admin-dashboard.html',
+                'COLLEGE_ADMIN': 'college-admin-dashboard.html',
+                'FACULTY': 'dashboard.html',
+                'STAFF': 'dashboard.html',
+                'STUDENT': 'dashboard.html'
+            };
+
+            const targetUrl = redirects[normalizedRole] || 'dashboard.html';
+            console.log('[AUTH] Final target URL:', targetUrl);
+
+            // Show success notification if on index/login page
+            if (window.location.pathname === '/' || window.location.pathname.endsWith('index.html')) {
+                showNotification(`Welcome back, ${user.full_name || user.email}!`, 'success');
+            }
+
             setTimeout(() => {
-                const redirects = {
-                    'SUPER_ADMIN': 'super-admin-dashboard.html',
-                    'COLLEGE_ADMIN': 'college-admin-dashboard.html',
-                    'FACULTY': 'dashboard.html',
-                    'STAFF': 'dashboard.html',
-                    'STUDENT': 'dashboard.html'
-                };
-                const targetUrl = redirects[role] || 'dashboard.html';
-                console.log('[AUTH] Redirecting to:', targetUrl);
+                console.log('[AUTH] Executing redirect to:', targetUrl);
                 window.location.href = targetUrl;
-            }, 1000);
+            }, 800);
         } else {
             console.error('[AUTH] Profile fetch failed:', result);
-            // Default to main dashboard if profile fetch fails
-            setTimeout(() => { window.location.href = 'dashboard.html'; }, 1000);
+            showNotification('Session expired. Please login again.', 'error');
+            setTimeout(() => { window.location.href = '/'; }, 1500);
         }
     } catch (err) {
         console.error('[AUTH] Profile Fetch Error:', err);
-        setTimeout(() => { window.location.href = 'dashboard.html'; }, 1000);
+        showNotification('Connection error. Please try again.', 'error');
     }
 }
 
