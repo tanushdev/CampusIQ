@@ -94,14 +94,14 @@ class AuthService:
                 raise UnauthorizedException('Account deactivated.')
 
             # Check if role_id is valid, if not, heal it
-            role_check = self._execute("SELECT role_code FROM roles WHERE role_id = :rid", {'rid': user['role_id']})
+            role_check = self._execute("SELECT role_code FROM roles WHERE role_id = CAST(:rid AS UUID)", {'rid': str(user['role_id'])})
             if not role_check:
                 current_app.logger.warning(f"User {email} has invalid role_id {user['role_id']}. Healing...")
                 # Try to determine role again
                 healed_role_id = self._determine_user_role(email, user_id=user_id)
                 if healed_role_id:
-                    self._execute("UPDATE users SET role_id = :rid WHERE user_id = :uid", 
-                                  {'rid': healed_role_id, 'uid': user_id})
+                    self._execute("UPDATE users SET role_id = CAST(:rid AS UUID) WHERE user_id = CAST(:uid AS UUID)", 
+                                  {'rid': str(healed_role_id), 'uid': str(user_id)})
                     user['role_id'] = healed_role_id
 
             # Check for Super Admin promotion (Env Var Override)
@@ -110,9 +110,9 @@ class AuthService:
                 sa_role_rows = self._execute("SELECT role_id FROM roles WHERE role_code = 'SUPER_ADMIN'")
                 if sa_role_rows:
                     sa_role_id = sa_role_rows[0]['role_id']
-                    if user['role_id'] != sa_role_id:
-                        self._execute("UPDATE users SET role_id = :rid WHERE user_id = :uid", 
-                                      {'rid': sa_role_id, 'uid': user_id})
+                    if str(user['role_id']) != str(sa_role_id):
+                        self._execute("UPDATE users SET role_id = CAST(:rid AS UUID) WHERE user_id = CAST(:uid AS UUID)", 
+                                      {'rid': str(sa_role_id), 'uid': str(user_id)})
                         user['role_id'] = sa_role_id
 
             # Update login stats and link google_id
@@ -121,8 +121,8 @@ class AuthService:
                 SET last_login_at = :ts, login_count = login_count + 1,
                     avatar_url = COALESCE(:avatar, avatar_url),
                     google_id = COALESCE(:gid, google_id)
-                WHERE user_id = :uid
-            """, {'ts': datetime.utcnow(), 'avatar': avatar_url, 'gid': google_id, 'uid': user_id})
+                WHERE user_id = CAST(:uid AS UUID)
+            """, {'ts': datetime.utcnow(), 'avatar': avatar_url, 'gid': google_id, 'uid': str(user_id)})
         else:
             # Auto-create super admin ONLY
             if email in current_app.config.get('SUPER_ADMIN_EMAILS', []):
@@ -134,10 +134,10 @@ class AuthService:
                         user_id, email, google_id, full_name, avatar_url,
                         role_id, college_id, status, email_verified,
                         login_count, created_at, updated_at
-                    ) VALUES (:uid, :email, :gid, :name, :avatar, :rid, :cid, 'ACTIVE', true, 1, :ts, :ts)
+                    ) VALUES (CAST(:uid AS UUID), :email, :gid, :name, :avatar, CAST(:rid AS UUID), CAST(:cid AS UUID), 'ACTIVE', true, 1, :ts, :ts)
                 """, {
-                    'uid': user_id, 'email': email, 'gid': google_id, 'name': full_name,
-                    'avatar': avatar_url, 'rid': role_id, 'cid': college['college_id'] if college else None,
+                    'uid': str(user_id), 'email': email, 'gid': google_id, 'name': full_name,
+                    'avatar': avatar_url, 'rid': str(role_id), 'cid': str(college['college_id']) if college else None,
                     'ts': datetime.utcnow()
                 })
                 
@@ -180,8 +180,8 @@ class AuthService:
             rows = self._execute("""
                 SELECT u.role_id FROM users u 
                 JOIN roles r ON u.role_id = r.role_id 
-                WHERE u.user_id = :uid
-            """, {'uid': user_id})
+                WHERE u.user_id = CAST(:uid AS UUID)
+            """, {'uid': str(user_id)})
             if rows and rows[0]['role_id']:
                 return rows[0]['role_id']
                 
