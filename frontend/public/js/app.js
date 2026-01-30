@@ -45,7 +45,7 @@ async function checkAuthStatus() {
         const result = await response.json();
 
         if (result.success) {
-            const role = result.data.role.code;
+            const role = typeof result.data.role === 'object' ? result.data.role.code : result.data.role;
             const redirects = {
                 'SUPER_ADMIN': 'super-admin-dashboard.html',
                 'COLLEGE_ADMIN': 'college-admin-dashboard.html',
@@ -106,7 +106,7 @@ async function fetchUserInfoAndRedirect() {
 
         if (result.success) {
             const user = result.data;
-            const role = user.role.code;
+            const role = typeof user.role === 'object' ? user.role.code : user.role;
 
             // Redirect after a short delay so user can see notification
             setTimeout(() => {
