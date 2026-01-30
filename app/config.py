@@ -97,6 +97,12 @@ class ProductionConfig(Config):
     SESSION_COOKIE_SECURE = True
     SESSION_COOKIE_SAMESITE = 'Lax'
     
+    # Serverless/Cloud stability: Use NullPool to avoid stale connections
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'poolclass': NullPool,
+        'pool_pre_ping': True,
+    }
+    
     # Ensure secrets are set
     @classmethod
     def init_app(cls, app):
