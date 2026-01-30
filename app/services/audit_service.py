@@ -99,3 +99,14 @@ class AuditService:
             user_id=user_id,
             user_email=user_email
         )
+
+
+# Singleton instance for easy import
+_audit_service = None
+
+def get_audit_service() -> AuditService:
+    """Get shared audit service instance"""
+    global _audit_service
+    if _audit_service is None:
+        _audit_service = AuditService()
+    return _audit_service
