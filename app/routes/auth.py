@@ -73,8 +73,8 @@ def google_callback():
         # Clear OAuth state
         session.pop('oauth_state', None)
         
-        # For web-based frontend, redirect with tokens to root
-        frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
+        # Redirect to the root of the hosting domain (Vercel)
+        frontend_url = request.host_url.rstrip('/') 
         return redirect(
             f"{frontend_url}/?"
             f"access_token={result['access_token']}&"
