@@ -58,7 +58,8 @@ class Config:
     AUDIT_SENSITIVE_FIELDS = ['password', 'token', 'secret']
 
     # Access Control
-    SUPER_ADMIN_EMAILS = os.environ.get('SUPER_ADMIN_EMAILS', 'admin@campusiq.com').split(',')
+    # Access Control
+    SUPER_ADMIN_EMAILS = [e.strip() for e in os.environ.get('SUPER_ADMIN_EMAILS', '').split(',') if e.strip()]
 
 
 class DevelopmentConfig(Config):
